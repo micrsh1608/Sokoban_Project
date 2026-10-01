@@ -1,0 +1,1 @@
+"""Sokoban project scaffold."""
