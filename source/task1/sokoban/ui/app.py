@@ -135,7 +135,7 @@ class App:
     def is_goal(self, state):
         return state.boxes == self.board.goals
 
-    def run(self):
+    def run(self, smoke=False):
         pygame.init()
 
         cell = min(
@@ -200,6 +200,8 @@ class App:
                 if now - last_update >= 500:
                     self.forward()
                     last_update = now
+                    
+            self.check_future()
 
             self.draw(screen, font, title_font, cell)
             pygame.display.flip()
