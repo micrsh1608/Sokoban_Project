@@ -6,7 +6,7 @@
 |---|---|---|
 | 524H0091 | Phạm Minh Huy | Lõi luật, UCS, engine cạnh tranh, AgentOne |
 | 524H0026 | Lưu Minh Phương | A*, heuristic, kiểm chứng, AgentTwo |
-| 524H0087 | Phan Hồng Đăng | pygame, benchmark, tích hợp GUI, đóng gói |
+| 524H0084 | Phan Hồng Đăng | pygame, benchmark, tích hợp GUI, đóng gói |
 
 Nhóm xác nhận giảng viên cho phép dùng AI với điều kiện hiểu nội dung. Mỗi người phải đọc, sửa, kiểm tra và giải thích phần mình; lưu nguồn code mẫu và các quyết định thực tế. Không tự điền số liệu hay tỷ lệ hoàn thành chưa có bằng chứng.
 
