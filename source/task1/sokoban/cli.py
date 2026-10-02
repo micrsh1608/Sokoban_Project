@@ -9,7 +9,7 @@ from .search.registry import SOLVERS
 
 def main(root: Path) -> int:
     parser = argparse.ArgumentParser(description="Sokoban team starter - not the final submission")
-    parser.add_argument("--mode", choices=("gui", "validate", "solve", "benchmark", "verify", "compete"), default="gui")
+    parser.add_argument("--mode", choices=("gui", "validate", "solve", "benchmark", "verify", "compete", "competitive-gui"), default="gui")
     parser.add_argument("--map", type=Path, default=root / "maps/single/tiny.txt")
     parser.add_argument("--algorithm", choices=tuple(SOLVERS), default="ucs")
     parser.add_argument("--seconds", type=float, default=10.0)
@@ -29,11 +29,15 @@ def main(root: Path) -> int:
         limits = SearchLimits(args.seconds, args.max_expanded)
         if args.rounds <= 0 or args.repeats <= 0:
             raise ValueError("rounds and repeats must be positive")
-        competitive = args.mode == "compete" or args.competitive_map
+        competitive = args.mode in ("compete", "competitive-gui") or args.competitive_map
         layout = load_map(args.map, competitive)
         if args.mode == "validate":
             print(json.dumps({"valid": True, "players": len(layout.players),
                               "boxes": len(layout.boxes), "goals": len(layout.board.goals)}, indent=2))
+            return 0
+        if args.mode == "competitive-gui":
+            from .ui.competitive import CompetitiveApp
+            CompetitiveApp(layout, args.rounds, args.agent_two).run(smoke=args.smoke)
             return 0
         if args.mode == "compete":
             from .competitive.engine import CompetitionEngine
