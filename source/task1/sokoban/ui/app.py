@@ -107,12 +107,14 @@ class App:
             self.initial = engine.initial
             self.states = list(engine.states)
             self.solution_actions = list(engine.actions)
+            self.solution_cost = len(self.solution_actions)
             self.message = "Demo ready"
         else:
             self.board = layout.board
             self.initial = layout.single_state()
             self.states = [self.initial]
             self.solution_actions = []
+            self.solution_cost = None
             self.message = "Ready"
 
     @property
@@ -222,6 +224,10 @@ class App:
             from ..search.contracts import validate_result
 
             self.paused = True
+            self.current_index = 0
+            self.states = [self.initial]
+            self.solution_actions = []
+            self.solution_cost = None
             self.message = f"Searching with {self.algorithm.upper()}..."
 
             solver = SOLVERS[self.algorithm]
@@ -263,6 +269,7 @@ class App:
 
             if result.status == Status.SOLVED:
                 self.solution_actions = list(result.actions)
+                self.solution_cost = result.total_cost
                 self.states = list(
                     replay(
                         self.board,
@@ -354,8 +361,9 @@ class App:
 
         lines = [
             f"Algorithm: {self.algorithm.upper()}",
-            f"Actions: {self.current_index}",
-            f"Cost: {self.current_index}",
+            f"Actions: {len(self.solution_actions) if self.solution_cost is not None else '--'}",
+            f"Cost: {self.solution_cost if self.solution_cost is not None else '--'}",
+            f"Replay: {self.current_index} / {len(self.states) - 1}",
             f"Status: {'GOAL REACHED' if self.is_goal(state) else 'IN PROGRESS'}",
             self.message,
             "1: UCS    2: A*    Enter: Solve    R: Reset    Esc: Quit",
