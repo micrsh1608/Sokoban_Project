@@ -1,7 +1,3 @@
-"""Atomic joint transitions. Both intents use the SAME immutable snapshot.
-
-See docs/DECISIONS.md for the team's conservative collision conventions.
-"""
 from dataclasses import dataclass
 from ..core.model import Action, Layout, Position, offset
 from .contracts import Box, CompetitionState
