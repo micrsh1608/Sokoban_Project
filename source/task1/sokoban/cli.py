@@ -20,6 +20,8 @@ def main(root: Path) -> int:
     parser.add_argument("--match-output", type=Path, default=root / "results/match.json")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--output", type=Path, default=root / "results/benchmark.csv")
+    parser.add_argument("--verify-states", type=int, default=72,
+                        help="Maximum number of reachable states used by heuristic verification")
     parser.add_argument("--competitive-map", action="store_true", help="Use A/P map convention for validation")
     parser.add_argument("--smoke", action="store_true", help="Render one GUI frame and exit (headless checks)")
     args = parser.parse_args()
@@ -60,7 +62,18 @@ def main(root: Path) -> int:
             benchmark(layout, limits, args.repeats, args.output, args.map.name)
             return 0
         if args.mode == "verify":
-            raise NotImplementedError("Use verify_heuristic.check_samples after adding exact-cost test data; see docs/INTEGRATION.md")
+            from .experiments.verify_heuristic import verify_map
+            from .search.heuristics import Heuristic
+            if args.verify_states <= 0:
+                raise ValueError("verify-states must be positive")
+            report = verify_map(
+                layout.board, state, Heuristic(layout.board),
+                max_states=args.verify_states,
+                oracle_limits=SearchLimits(seconds=args.seconds,
+                                            max_expanded=args.max_expanded),
+            )
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+            return 0 if not report["violations"] else 2
         from .ui.app import App
         App(layout, limits, args.algorithm).run(smoke=args.smoke)
         return 0
