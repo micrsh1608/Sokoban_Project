@@ -30,7 +30,7 @@ Nếu `py -3.11` báo không tìm thấy: dùng `py -0p` để xem Python đã c
 - Space: phát/tạm dừng lịch sử; → tiến; ← lùi.
 - R: đặt lại trạng thái ban đầu.
 - 1: chọn UCS; 2: chọn A*; Enter: gọi solver từ trạng thái ban đầu.
-- Enter: chạy solver đã chọn từ trạng thái ban đầu và nạp lời giải vào GUI.
+- **Hiện Enter trả `not_implemented` vì chưa ghép code mẫu. Đây là trạng thái có chủ ý.**
 
 Chọn map:
 
@@ -85,8 +85,8 @@ Theo đề: `%` tường, `A` người chơi, `B` thùng, `D` đích, `C` thùng
 
 ## 5. Trạng thái thật của khung
 
-Đã có: parser, trạng thái bất biến, luật một tác tử, chi phí đơn vị, UCS, A*, heuristic, kiểm chứng mẫu heuristic, GUI thủ công/replay, benchmark, engine cạnh tranh, AgentOne, AgentTwo và runner.
+Đã có: parser, trạng thái bất biến, luật một tác tử, chi phí đơn vị, GUI thủ công/replay, hợp đồng solver, kiểm tra lời giải, bộ chạy benchmark, hàm kiểm tra mẫu heuristic và giao diện tác tử.
 
-Còn ngoài phạm vi phần Phương: GUI cạnh tranh hoàn chỉnh, báo cáo/slide/video cuối và kiểm tra thực tế trên Mac Intel. Các kết quả benchmark/verification phải được chạy lại trên máy nhóm trước khi đưa vào báo cáo.
+Chưa có: UCS/A* tích hợp, heuristic, bộ dữ liệu chi phí tối ưu, engine chuyển trạng thái đồng thời, agent tìm kiếm, runner timeout, GUI cạnh tranh, số liệu thực nghiệm, báo cáo hoàn chỉnh, slide PDF, video và kiểm tra thực tế trên Mac Intel.
 
 Tìm `TODO`, `NotImplementedError` và `NOT_IMPLEMENTED` để nhận diện các điểm cần hoàn thiện. Không đổi chúng thành kết quả giả để làm chương trình trông như hoàn tất.
