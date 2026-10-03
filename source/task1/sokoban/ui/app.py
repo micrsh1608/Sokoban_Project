@@ -1,118 +1,401 @@
-"""Dang: working single-player viewer/manual/replay shell; competition UI remains TODO."""
+from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 import pygame
-from ..core.history import History
-from ..core.model import Action, Layout
-from ..core.rules import is_goal, replay, step
-from ..search.contracts import SearchLimits, Status, validate_result
-from ..search.registry import SOLVERS
+
+
+@dataclass(frozen=True)
+class DemoBoard:
+    width: int
+    height: int
+    walls: frozenset[tuple[int, int]]
+    floors: frozenset[tuple[int, int]]
+    goals: frozenset[tuple[int, int]]
+
+
+@dataclass(frozen=True)
+class DemoState:
+    player: tuple[int, int]
+    boxes: frozenset[tuple[int, int]]
+
+
+class DemoEngine:
+    def __init__(self):
+        self.board = self.create_board()
+        self.initial = DemoState((1, 1), frozenset({(2, 2)}))
+        self.actions = ["East", "South"]
+        self.states = self.build_states()
+
+    def create_board(self):
+        rows = [
+            "%%%%%%%",
+            "%     %",
+            "%     %",
+            "%     %",
+            "%%%%%%%"
+        ]
+
+        walls = set()
+        floors = set()
+
+        for r, row in enumerate(rows):
+            for c, char in enumerate(row):
+                if char == "%":
+                    walls.add((r, c))
+                else:
+                    floors.add((r, c))
+
+        return DemoBoard(
+            width=len(rows[0]),
+            height=len(rows),
+            walls=frozenset(walls),
+            floors=frozenset(floors),
+            goals=frozenset({(3, 2)})
+        )
+
+    def step(self, state, action):
+        directions = {
+            "North": (-1, 0),
+            "East": (0, 1),
+            "West": (0, -1),
+            "South": (1, 0)
+        }
+
+        dr, dc = directions[action]
+        target = (state.player[0] + dr, state.player[1] + dc)
+
+        if target not in self.board.floors:
+            return state
+
+        boxes = set(state.boxes)
+
+        if target in boxes:
+            destination = (target[0] + dr, target[1] + dc)
+
+            if destination not in self.board.floors or destination in boxes:
+                return state
+
+            boxes.remove(target)
+            boxes.add(destination)
+
+        return DemoState(target, frozenset(boxes))
+
+    def build_states(self):
+        states = [self.initial]
+        current = self.initial
+
+        for action in self.actions:
+            current = self.step(current, action)
+            states.append(current)
+
+        return states
 
 
 class App:
-    def __init__(self, layout: Layout, limits: SearchLimits, algorithm: str):
-        self.board = layout.board
-        self.initial = layout.single_state()
-        self.history = History((self.initial,))
-        self.limits = limits
+    def __init__(self, layout=None, limits=None, algorithm="ucs"):
+        self.demo = layout is None
         self.algorithm = algorithm
-        self.paused = True
-        self.message = "Starter ready. WASD to play; Enter to call solver."
+        from ..search.contracts import SearchLimits
+        self.limits = limits or SearchLimits()
+        self.cancel_event = Event()
+        self.executor = ThreadPoolExecutor(max_workers=1)
         self.future = None
+        self.paused = True
+        self.message = "Demo mode"
+        self.current_index = 0
 
-    def run(self, smoke: bool = False):
+        if self.demo:
+            engine = DemoEngine()
+            self.board = engine.board
+            self.initial = engine.initial
+            self.states = list(engine.states)
+            self.solution_actions = list(engine.actions)
+            self.solution_cost = len(self.solution_actions)
+            self.message = "Demo ready"
+        else:
+            self.board = layout.board
+            self.initial = layout.single_state()
+            self.states = [self.initial]
+            self.solution_actions = []
+            self.solution_cost = None
+            self.message = "Ready"
+
+    @property
+    def current_state(self):
+        return self.states[self.current_index]
+
+    def forward(self):
+        if self.current_index < len(self.states) - 1:
+            self.current_index += 1
+
+    def backward(self):
+        if self.current_index > 0:
+            self.current_index -= 1
+
+    def reset(self):
+        self.current_index = 0
+        self.paused = True
+        self.message = "Reset"
+
+    def is_goal(self, state):
+        return state.boxes == self.board.goals
+
+    def run(self, smoke=False):
         pygame.init()
-        cell = min(64, max(12, 720 // max(self.board.width, self.board.height)))
-        screen = pygame.display.set_mode((max(900, self.board.width * cell + 40),
-                                          self.board.height * cell + 230))
-        pygame.display.set_caption("Sokoban | Huy - Phuong - Dang | Starter")
-        font = pygame.font.Font(None, 25)
-        clock = pygame.time.Clock()
-        pool = ThreadPoolExecutor(max_workers=1)
-        running, last_tick = True, pygame.time.get_ticks()
-        try:
-            while running:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        running = False
-                    elif event.type == pygame.KEYDOWN:
-                        key = event.key
-                        if key == pygame.K_ESCAPE:
-                            running = False
-                        elif self.future is None:
-                            if key == pygame.K_1: self.algorithm = "ucs"
-                            elif key == pygame.K_2: self.algorithm = "astar"
-                            elif key == pygame.K_SPACE: self.paused = not self.paused
-                            elif key == pygame.K_RIGHT:
-                                self.paused = True
-                                self.history.forward()
-                            elif key == pygame.K_LEFT:
-                                self.paused = True
-                                self.history.backward()
-                            elif key == pygame.K_r:
-                                self.history = History((self.initial,))
-                                self.paused = True
-                            elif key == pygame.K_RETURN:
-                                self.paused = True
-                                self.message = "Searching from initial state..."
-                                self.future = pool.submit(SOLVERS[self.algorithm], self.board,
-                                                          self.initial, self.limits)
-                            else:
-                                actions = {pygame.K_w: Action.NORTH, pygame.K_d: Action.EAST,
-                                           pygame.K_a: Action.WEST, pygame.K_s: Action.SOUTH}
-                                if key in actions:
-                                    self.paused = True
-                                    next_state = step(self.board, self.history.current, actions[key])
-                                    if next_state is not None:
-                                        self.history.append(next_state)
-                if self.future is not None and self.future.done():
-                    try:
-                        result = self.future.result()
-                        validate_result(self.board, self.initial, result)
-                        self.message = f"{result.status.value}: {result.message}"
-                        if result.status == Status.SOLVED:
-                            self.history = History(replay(self.board, self.initial, result.actions))
-                            self.message = f"Solved | actions={len(result.actions)} | cost={result.total_cost}"
-                    except Exception as exc:
-                        self.message = f"Solver error: {exc}"
-                    finally:
-                        self.future = None
-                now = pygame.time.get_ticks()
-                if not self.paused and now - last_tick >= 300:
-                    self.history.forward()
-                    last_tick = now
-                self.draw(screen, font, cell)
-                pygame.display.flip()
-                clock.tick(30)
-                if smoke:
-                    running = False
-        finally:
-            # Single-player solver MUST check its own SearchLimits. This thread
-            # is not a hard timeout sandbox and must not be used for competition.
-            pool.shutdown(wait=False, cancel_futures=True)
-            pygame.quit()
 
-    def draw(self, screen, font, cell):
+        cell = min(
+            80,
+            max(
+                40,
+                700 // max(self.board.width, self.board.height)
+            )
+        )
+
+        width = max(1000, self.board.width * cell + 40)
+        height = self.board.height * cell + 310
+
+        screen = pygame.display.set_mode((width, height))
+        pygame.display.set_caption("Sokoban - Dang GUI")
+
+        font = pygame.font.Font(None, 28)
+        title_font = pygame.font.Font(None, 38)
+        clock = pygame.time.Clock()
+
+        running = True
+        last_update = pygame.time.get_ticks()
+
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+
+                    elif event.key == pygame.K_SPACE:
+                        self.paused = not self.paused
+                        self.message = "Playing" if not self.paused else "Paused"
+
+                    elif event.key == pygame.K_RIGHT:
+                        self.paused = True
+                        self.forward()
+
+                    elif event.key == pygame.K_LEFT:
+                        self.paused = True
+                        self.backward()
+
+                    elif event.key == pygame.K_r:
+                        self.reset()
+
+                    elif event.key == pygame.K_1:
+                        if self.future is None:
+                            self.algorithm = "ucs"
+                            self.message = "Algorithm: UCS"
+
+                    elif event.key == pygame.K_2:
+                        if self.future is None:
+                            self.algorithm = "astar"
+                            self.message = "Algorithm: A*"
+
+                    elif event.key == pygame.K_RETURN:
+                        self.solve()
+
+            if not self.paused:
+                now = pygame.time.get_ticks()
+
+                if now - last_update >= 500:
+                    self.forward()
+                    last_update = now
+                    
+            self.check_future()
+
+            self.draw(screen, font, title_font, cell)
+            pygame.display.flip()
+            clock.tick(60)
+
+            if smoke:
+                running = False
+
+        self.close()
+        pygame.quit()
+
+    def close(self):
+        self.cancel_event.set()
+        self.executor.shutdown(wait=True, cancel_futures=True)
+
+    def solve(self):
+        if self.future is not None:
+            return
+        if self.demo:
+            self.current_index = 0
+            self.paused = False
+            self.message = f"Demo solution | {len(self.solution_actions)} actions"
+            return
+
+        try:
+            from ..search.registry import SOLVERS
+
+            self.paused = True
+            self.states = [self.initial]
+            self.solution_actions = []
+            self.solution_cost = None
+            self.current_index = 0
+            self.message = f"Searching with {self.algorithm.upper()}..."
+
+            solver = SOLVERS[self.algorithm]
+
+            self.future = self.executor.submit(
+                solver,
+                self.board,
+                self.initial,
+                self.limits,
+                cancel_event=self.cancel_event
+            )
+
+        except Exception as exc:
+            self.message = f"Solver error: {exc}"
+
+    def check_future(self):
+        if self.future is None:
+            return
+
+        if not self.future.done():
+            return
+
+        try:
+            from ..search.contracts import Status, validate_result
+            from ..core.rules import replay
+
+            result = self.future.result()
+
+            validate_result(
+                self.board,
+                self.initial,
+                result
+            )
+
+            self.message = (
+                f"{result.status.value} | "
+                f"actions={len(result.actions)} | "
+                f"cost={result.total_cost}"
+            )
+
+            if result.status == Status.SOLVED:
+                self.solution_actions = list(result.actions)
+                self.solution_cost = result.total_cost
+                self.states = list(
+                    replay(
+                        self.board,
+                        self.initial,
+                        result.actions
+                    )
+                )
+                self.current_index = 0
+
+        except Exception as exc:
+            self.message = f"Solver error: {exc}"
+
+        finally:
+            self.future = None
+
+    def draw(self, screen, font, title_font, cell):
         screen.fill((237, 242, 247))
-        state = self.history.current
+
+        title = title_font.render(
+            "SOKOBAN",
+            True,
+            (30, 45, 65)
+        )
+
+        screen.blit(title, (20, 15))
+
+        state = self.current_state
+
+        offset_x = 20
+        offset_y = 70
+
         for r in range(self.board.height):
             for c in range(self.board.width):
-                p = (r, c)
-                rect = pygame.Rect(20 + c * cell, 20 + r * cell, cell - 2, cell - 2)
-                if p in self.board.walls:
-                    pygame.draw.rect(screen, (66, 80, 101), rect, border_radius=3)
-                elif p in self.board.floors:
-                    pygame.draw.rect(screen, (255, 255, 255), rect)
-                    if p in self.board.goals:
-                        pygame.draw.circle(screen, (224, 90, 80), rect.center, max(3, cell // 7))
-                if p in state.boxes:
-                    color = (51, 150, 114) if p in self.board.goals else (204, 143, 55)
-                    pygame.draw.rect(screen, color, rect.inflate(-8, -8), border_radius=3)
-                if p == state.player:
-                    pygame.draw.circle(screen, (52, 113, 205), rect.center, max(4, cell // 3))
-        lines = [f"Algorithm: {self.algorithm.upper()} | actions: {self.history.index}/{len(self.history.states)-1} | cost: {self.history.index}",
-                 "1: UCS   2: A*   Enter: Solve from start   R: Reset   Esc: Quit",
-                 "WASD: Manual   Space: Play/Pause   Right: Forward   Left: Back",
-                 f"{'PAUSED' if self.paused else 'PLAYING'} | {'GOAL REACHED' if is_goal(self.board, state) else 'In progress'}",
-                 self.message]
-        for i, line in enumerate(lines):
-            screen.blit(font.render(line, True, (30, 45, 65)), (20, 45 + self.board.height * cell + i * 30))
+                position = (r, c)
+
+                rect = pygame.Rect(
+                    offset_x + c * cell,
+                    offset_y + r * cell,
+                    cell - 2,
+                    cell - 2
+                )
+
+                if position in self.board.walls:
+                    pygame.draw.rect(
+                        screen,
+                        (66, 80, 101),
+                        rect,
+                        border_radius=4
+                    )
+
+                elif position in self.board.floors:
+                    pygame.draw.rect(
+                        screen,
+                        (255, 255, 255),
+                        rect
+                    )
+
+                    if position in self.board.goals:
+                        pygame.draw.circle(
+                            screen,
+                            (220, 80, 80),
+                            rect.center,
+                            max(5, cell // 7)
+                        )
+
+                if position in state.boxes:
+                    box_color = (
+                        (51, 150, 114)
+                        if position in self.board.goals
+                        else (204, 143, 55)
+                    )
+
+                    pygame.draw.rect(
+                        screen,
+                        box_color,
+                        rect.inflate(-12, -12),
+                        border_radius=5
+                    )
+
+                if position == state.player:
+                    pygame.draw.circle(
+                        screen,
+                        (52, 113, 205),
+                        rect.center,
+                        max(8, cell // 3)
+                    )
+
+        info_y = offset_y + self.board.height * cell + 20
+
+        lines = [
+            f"Algorithm: {self.algorithm.upper()}",
+            f"Actions: {len(self.solution_actions) if self.solution_cost is not None else '--'}",
+            f"Cost: {self.solution_cost if self.solution_cost is not None else '--'}",
+            f"Replay: {self.current_index} / {len(self.states) - 1}",
+            f"Status: {'GOAL REACHED' if self.is_goal(state) else 'IN PROGRESS'}",
+            self.message,
+            "1: UCS    2: A*    Enter: Solve    R: Reset    Esc: Quit",
+            "Space: Play/Pause    Right: Forward    Left: Back"
+        ]
+
+        for index, line in enumerate(lines):
+            surface = font.render(
+                line,
+                True,
+                (30, 45, 65)
+            )
+
+            screen.blit(
+                surface,
+                (20, info_y + index * 30)
+            )
+
+
+if __name__ == "__main__":
+    App().run()

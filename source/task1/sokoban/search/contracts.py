@@ -10,6 +10,7 @@ class Status(str, Enum):
     SOLVED = "solved"
     UNSOLVABLE = "unsolvable"
     TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
     LIMIT_REACHED = "limit_reached"
     NOT_IMPLEMENTED = "not_implemented"
 

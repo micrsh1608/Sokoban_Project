@@ -1,0 +1,7 @@
+﻿map,algorithm,repeat,status,actions,total_cost,elapsed_ms,python_peak_bytes,memory_run_status,memory_run_cost,limit_seconds,max_expanded_limit,expanded,generated,max_frontier,max_reached,preprocess_ms
+two_boxes.txt,ucs,1,solved,8,8,1.9816000130958855,108396,solved,8,10.0,100000,284,925,209,492,0.0
+two_boxes.txt,astar,1,solved,8,8,0.7244999869726598,32928,solved,8,10.0,100000,76,251,70,146,0.036900019040331244
+two_boxes.txt,astar,2,solved,8,8,0.6412999937310815,32896,solved,8,10.0,100000,76,251,70,146,0.024600012693554163
+two_boxes.txt,ucs,2,solved,8,8,1.6633000050205737,108264,solved,8,10.0,100000,284,925,209,492,0.0
+two_boxes.txt,ucs,3,solved,8,8,1.6332999803125858,108248,solved,8,10.0,100000,284,925,209,492,0.0
+two_boxes.txt,astar,3,solved,8,8,0.6456999981310219,32824,solved,8,10.0,100000,76,251,70,146,0.027300004148855805

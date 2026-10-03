@@ -4,6 +4,7 @@ import json
 import multiprocessing as mp
 import tempfile
 from time import perf_counter
+from threading import Event, Timer
 import unittest
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'source/task1'))
@@ -11,7 +12,7 @@ sys.path.insert(0,str(ROOT/'tests'))
 from sokoban.core.parser import load_map
 from sokoban.core.model import Action
 from sokoban.competitive.engine import CompetitionEngine
-from sokoban.competitive.runner import run_match, AGENT_ONE, WAIT_AGENT
+from sokoban.competitive.runner import run_match, AGENT_ONE, AGENT_TWO, WAIT_AGENT, MatchCancelled
 
 
 class RunnerTests(unittest.TestCase):
@@ -76,5 +77,36 @@ class RunnerTests(unittest.TestCase):
         for budget in (0,1001,True,1.5):
             with self.subTest(budget=budget), self.assertRaises(ValueError):
                 run_match(CompetitionEngine(self.layout,1),decision_ms=budget)
+
+    def test_real_two_agents_and_replay(self):
+        engine = CompetitionEngine(self.layout, 8)
+        result = run_match(engine, (AGENT_ONE, AGENT_TWO))
+        self.assertEqual(len(result.turns), 8)
+        for record in result.turns:
+            self.assertTrue(all(d.status == 'ok' and d.elapsed_ms < 1000 for d in record.decisions))
+            self.assertEqual(engine.step(record.before, tuple(d.action for d in record.decisions)), record.after)
+
+    def test_cancellation_cleans_workers_without_extra_round(self):
+        event = Event()
+        records = []
+        def cancel(record):
+            records.append(record)
+            event.set()
+        with self.assertRaises(MatchCancelled):
+            run_match(CompetitionEngine(self.layout, 50), (WAIT_AGENT, WAIT_AGENT),
+                      on_turn=cancel, cancel_event=event)
+        self.assertEqual(len(records), 1)
+
+    def test_cancel_during_hung_decision_cleans_workers(self):
+        event = Event()
+        timer = Timer(0.3, event.set)
+        timer.start()
+        try:
+            with self.assertRaises(MatchCancelled):
+                run_match(CompetitionEngine(self.layout, 50),
+                          ('runner_fixtures:HangAgent', WAIT_AGENT), cancel_event=event)
+        finally:
+            timer.cancel()
+            timer.join()
 
 if __name__=='__main__': unittest.main()

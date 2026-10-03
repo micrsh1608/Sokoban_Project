@@ -12,7 +12,7 @@ from ..core.rules import is_goal, successors
 from .contracts import SearchLimits, SearchMetrics, SearchResult, Status
 
 
-def solve(board: Board, initial: State, limits: SearchLimits) -> SearchResult:
+def solve(board: Board, initial: State, limits: SearchLimits, *, cancel_event=None) -> SearchResult:
     deadline = perf_counter() + limits.seconds
     metrics = SearchMetrics(max_frontier=1, max_reached=1)
     order = count()
@@ -21,6 +21,8 @@ def solve(board: Board, initial: State, limits: SearchLimits) -> SearchResult:
     parents: dict[State, tuple[State, Action]] = {}
 
     while frontier:
+        if cancel_event is not None and cancel_event.is_set():
+            return SearchResult(Status.CANCELLED, metrics=metrics, message="Search cancelled.")
         if perf_counter() >= deadline:
             return SearchResult(Status.TIMEOUT, metrics=metrics,
                                 message="Search time limit reached; solvability is unknown.")

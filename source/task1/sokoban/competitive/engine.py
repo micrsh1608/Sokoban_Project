@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 from ..core.model import Action, Layout, Position, offset
 from .contracts import Box, CompetitionState
