@@ -1,16 +1,24 @@
-from threading import Thread
+from threading import Event, Thread
 from queue import Queue, Empty
 import pygame
 
 from ..competitive.engine import CompetitionEngine
-from ..competitive.runner import run_match, AGENT_ONE, AGENT_TWO, WAIT_AGENT
+from ..competitive.runner import run_match, AGENT_ONE, AGENT_TWO, WAIT_AGENT, MatchCancelled
 
 
 class CompetitiveApp:
-    def __init__(self, layout, rounds=50, agent_two="wait"):
+    OPPONENTS = ("wait", "agent-one", "agent-two")
+
+    def __init__(self, layout, rounds=50, agent_two="wait", match_output=None):
         self.layout = layout
         self.rounds = rounds
+        self.round_text = str(rounds)
+        self.round_editing = False
         self.agent_two = agent_two
+        if self.agent_two not in self.OPPONENTS:
+            self.agent_two = "wait"
+        self.match_output = match_output
+        self.decision_ms = 1000
 
         self.board = layout.board
         self.engine = CompetitionEngine(layout, rounds)
@@ -21,6 +29,7 @@ class CompetitiveApp:
         self.current_index = 0
 
         self.queue = Queue()
+        self.cancel_event = Event()
         self.worker = None
         self.running_match = False
         self.finished = False
@@ -35,7 +44,15 @@ class CompetitiveApp:
         if self.running_match:
             return
 
-        self.engine = CompetitionEngine(self.layout, self.rounds)
+        try:
+            rounds = int(self.round_text)
+            if rounds <= 0:
+                raise ValueError
+            self.engine = CompetitionEngine(self.layout, rounds)
+        except ValueError:
+            self.message = "Rounds n must be a positive whole number."
+            return
+        self.rounds = rounds
         self.snapshots = [self.engine.initial]
         self.scores = [(0, 0)]
         self.reasons = [("", "")]
@@ -43,18 +60,21 @@ class CompetitiveApp:
         self.finished = False
         self.paused = False
         self.running_match = True
+        self.round_editing = False
         self.message = "Match running..."
-
-        second = AGENT_TWO if self.agent_two == "agent-two" else WAIT_AGENT
+        self.queue = Queue()
+        self.cancel_event = Event()
+        second = {"wait": WAIT_AGENT, "agent-one": AGENT_ONE,
+                  "agent-two": AGENT_TWO}[self.agent_two]
 
         self.worker = Thread(
             target=self._run_match,
-            args=(second,),
+            args=(second, self.cancel_event),
             daemon=True
         )
         self.worker.start()
 
-    def _run_match(self, second):
+    def _run_match(self, second, cancel_event):
         try:
             def on_turn(record):
                 self.queue.put(("turn", record))
@@ -62,12 +82,16 @@ class CompetitiveApp:
             result = run_match(
                 self.engine,
                 (AGENT_ONE, second),
-                1000,
-                on_turn=on_turn
+                self.decision_ms,
+                on_turn=on_turn,
+                cancel_event=cancel_event,
             )
-
+            if self.match_output is not None:
+                result.save(self.match_output)
             self.queue.put(("done", result))
 
+        except MatchCancelled:
+            self.queue.put(("cancelled", None))
         except Exception as exc:
             self.queue.put(("error", str(exc)))
 
@@ -104,6 +128,11 @@ class CompetitiveApp:
                 self.running_match = False
                 self.finished = True
                 self.message = f"Match error: {data}"
+
+            elif event == "cancelled":
+                self.running_match = False
+                self.finished = True
+                self.message = "Match cancelled."
 
     def forward(self):
         if self.current_index < len(self.snapshots) - 1:
@@ -161,6 +190,15 @@ class CompetitiveApp:
                     elif event.key == pygame.K_RETURN:
                         self.start_match()
 
+                    elif event.key == pygame.K_t and not self.running_match:
+                        self.agent_two = self.OPPONENTS[
+                            (self.OPPONENTS.index(self.agent_two) + 1) % len(self.OPPONENTS)
+                        ]
+
+                    elif event.key == pygame.K_BACKSPACE and not self.running_match:
+                        self.round_text = self.round_text[:-1]
+                        self.round_editing = True
+
                     elif event.key == pygame.K_SPACE:
                         self.paused = not self.paused
 
@@ -174,6 +212,12 @@ class CompetitiveApp:
 
                     elif event.key == pygame.K_r:
                         self.reset_view()
+
+                    elif not self.running_match and event.unicode in "0123456789":
+                        if not self.round_editing:
+                            self.round_text = ""
+                            self.round_editing = True
+                        self.round_text = (self.round_text + event.unicode)[:8]
 
             now = pygame.time.get_ticks()
 
@@ -196,6 +240,7 @@ class CompetitiveApp:
             if smoke:
                 running = False
 
+        self.cancel_event.set()
         pygame.quit()
 
     def draw(self, screen, title_font, font, small_font, cell):
@@ -292,14 +337,14 @@ class CompetitiveApp:
         )
 
         lines = [
-            f"Round: {round_number} / {self.rounds}",
+            f"Rounds n: {self.round_text} | Round: {round_number} / {self.rounds}",
             f"Score: Agent 1 = {score[0]} | Agent 2 = {score[1]}",
             f"Agent 1: BLUE     Agent 2: ORANGE",
             f"Controller 2: {self.agent_two}",
             f"Status: {'RUNNING' if self.running_match else 'FINISHED' if self.finished else 'READY'}",
             self.message,
             f"Last result: {reasons[0]} | {reasons[1]}",
-            "Enter: Start    Space: Pause/Play    Right: Next    Left: Back    R: Reset    Esc: Quit"
+            "Type n + Enter: Start    T: Opponent    Space: Pause/Play    Right: Next    Left: Back    R: Reset    Esc: Quit"
         ]
 
         for index, line in enumerate(lines):

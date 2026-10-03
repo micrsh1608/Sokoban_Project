@@ -9,6 +9,7 @@ import json
 import multiprocessing as mp
 from multiprocessing.connection import wait
 from pathlib import Path
+from threading import Event
 from time import perf_counter
 from ..core.model import Action
 from .contracts import Observation
@@ -16,6 +17,10 @@ from .contracts import Observation
 AGENT_ONE = 'sokoban.competitive.agent_one:AgentOne'
 AGENT_TWO = 'sokoban.competitive.agent_two:AgentTwo'
 WAIT_AGENT = 'sokoban.competitive.baseline_agent:WaitAgent'
+
+
+class MatchCancelled(RuntimeError):
+    """Raised when the caller requests a clean stop between agent decisions."""
 
 
 @dataclass(frozen=True)
@@ -121,7 +126,7 @@ class _Slot:
             self.connection.close()
             self.connection = None
 
-    def start(self):
+    def start(self, cancel_event: Event | None = None):
         self.close()
         ctx = mp.get_context('spawn')
         parent, child = ctx.Pipe()
@@ -135,9 +140,14 @@ class _Slot:
             raise
         child.close()
         # Setup occurs before the round's 1000 ms decision clocks start.
-        if not parent.poll(5.0):
-            self.close()
-            raise RuntimeError(f'Worker initialization timed out: {self.spec}')
+        startup_deadline = perf_counter() + 5.0
+        while not parent.poll(min(0.05, max(0.0, startup_deadline - perf_counter()))):
+            if cancel_event is not None and cancel_event.is_set():
+                self.close()
+                raise MatchCancelled('Match cancelled during worker startup.')
+            if perf_counter() >= startup_deadline:
+                self.close()
+                raise RuntimeError(f'Worker initialization timed out: {self.spec}')
         try:
             message = parent.recv()
         except EOFError as exc:
@@ -148,7 +158,8 @@ class _Slot:
             raise RuntimeError(f'Worker startup failed: {message}')
 
 
-def run_match(engine, agent_specs=(AGENT_ONE, WAIT_AGENT), decision_ms=1000, on_turn=None):
+def run_match(engine, agent_specs=(AGENT_ONE, WAIT_AGENT), decision_ms=1000, on_turn=None,
+              cancel_event: Event | None = None):
     """Blocking match API. GUI should run it off its event loop.
 
     on_turn(record) runs in the caller thread, only after the joint commit.
@@ -162,11 +173,15 @@ def run_match(engine, agent_specs=(AGENT_ONE, WAIT_AGENT), decision_ms=1000, on_
     state, records = engine.initial, []
     try:
         for slot in slots:
-            slot.start()
+            if cancel_event is not None and cancel_event.is_set():
+                raise MatchCancelled('Match cancelled before startup.')
+            slot.start(cancel_event)
         while not engine.finished(state):
+            if cancel_event is not None and cancel_event.is_set():
+                raise MatchCancelled('Match cancelled.')
             for slot in slots:
                 if slot.process is None:
-                    slot.start()
+                    slot.start(cancel_event)
             before = state
             round_id = before.round_index + 1
             decisions = [None, None]
@@ -185,6 +200,8 @@ def run_match(engine, agent_specs=(AGENT_ONE, WAIT_AGENT), decision_ms=1000, on_
                                             detail=str(exc)[:300])
             # A single wait set avoids giving the second controller extra time.
             while pending:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise MatchCancelled('Match cancelled while waiting for decisions.')
                 now = perf_counter()
                 for conn, i in list(pending.items()):
                     if now >= deadlines[i]:
@@ -193,7 +210,7 @@ def run_match(engine, agent_specs=(AGENT_ONE, WAIT_AGENT), decision_ms=1000, on_
                         del pending[conn]
                 if not pending:
                     break
-                timeout = max(0, min(deadlines[i] for i in pending.values()) - perf_counter())
+                timeout = min(0.05, max(0, min(deadlines[i] for i in pending.values()) - perf_counter()))
                 for conn in wait(list(pending), timeout=timeout):
                     i = pending.pop(conn)
                     try:
@@ -216,6 +233,8 @@ def run_match(engine, agent_specs=(AGENT_ONE, WAIT_AGENT), decision_ms=1000, on_
             for i, decision in enumerate(decisions):
                 if decision.status in ('timeout', 'error'):
                     slots[i].close()
+            if cancel_event is not None and cancel_event.is_set():
+                raise MatchCancelled('Match cancelled before committing the round.')
             result = engine.resolve(before, tuple(d.action for d in decisions))
             state = result.state
             record = TurnRecord(round_id, before, state, tuple(decisions), result.reasons, engine.scores(state))
